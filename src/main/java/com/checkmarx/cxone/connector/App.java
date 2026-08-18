@@ -1,23 +1,22 @@
 package com.checkmarx.cxone.connector;
 
 import com.checkmarx.cxone.connector.model.AnalyticsQuery;
-import com.checkmarx.cxone.connector.model.DistributionItem;
-import com.checkmarx.cxone.connector.model.DistributionResponse;
-import com.checkmarx.cxone.connector.model.MostCommonVulnerabilitiesItem;
-import com.checkmarx.cxone.connector.model.Project;
-import com.checkmarx.cxone.connector.model.Scan;
-import com.checkmarx.cxone.connector.model.ScanSummaryResponse;
-import com.checkmarx.cxone.connector.model.SeverityAndStateItem;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Runnable demo that exercises {@link CxOneClient} end to end against a real
  * Checkmarx One tenant.
+ *
+ * <p><b>Every response is read as generic parsed JSON</b> ({@link JsonNode},
+ * or a {@code List}/{@code Map} of them), not typed model classes - fields
+ * are pulled out with {@code node.path("fieldName")} as needed, right where
+ * they're used below. See {@link CxOneClient}'s class Javadoc for why.
  *
  * <p><b>&#9888; Demo scope - every pull below is capped at
  * {@value #DEMO_LIMIT} items.</b> This is intentional: the goal of this demo
@@ -151,13 +150,14 @@ public final class App {
             // A single GET /api/projects/ call with limit=DEMO_LIMIT,
             // offset=0 - NOT client.getAllProjects(), which would instead
             // auto-page until every project in the tenant was fetched.
+            // getProjectsPage(...) returns the raw response JSON; individual
+            // projects are the elements of its "projects" array.
             // ----------------------------------------------------------------
             System.out.println("=== Projects (demo-limited to " + DEMO_LIMIT + ") ===");
-            List<Project> projects = Objects.requireNonNullElse(
-                    client.getProjectsPage(DEMO_LIMIT, 0).getProjects(), List.of());
+            List<JsonNode> projects = toList(client.getProjectsPage(DEMO_LIMIT, 0).path("projects"));
             System.out.println("Fetched " + projects.size() + " project(s) (tenant may contain more).");
-            for (Project p : projects) {
-                System.out.printf("  %-36s %s%n", p.getId(), p.getName());
+            for (JsonNode p : projects) {
+                System.out.printf("  %-36s %s%n", p.path("id").asText(), p.path("name").asText());
             }
 
             // ----------------------------------------------------------------
@@ -169,11 +169,11 @@ public final class App {
             // would instead auto-page until every project in the tenant had
             // its latest scan fetched. Each entry returned is still the true
             // latest scan for that project; only the number of projects
-            // covered is capped.
+            // covered is capped. Returned as project-id -> scan JsonNode.
             // ----------------------------------------------------------------
             System.out.println();
             System.out.println("=== Latest scan per project (demo-limited to " + DEMO_LIMIT + " projects) ===");
-            Map<String, Scan> latestScansByProject = client.getProjectsLastScanPage(
+            Map<String, JsonNode> latestScansByProject = client.getProjectsLastScanPage(
                     null, null, null, null, null, DEMO_LIMIT, 0);
             System.out.println("Fetched latest scan for " + latestScansByProject.size() + " project(s) (tenant may contain more).");
             printLatestScans(latestScansByProject);
@@ -205,7 +205,7 @@ public final class App {
             //     any exist). "project-ids" accepts an array of project
             //     UUIDs and is sent as one repeated query parameter per ID.
             List<String> sampleProjectIds = projects.stream()
-                    .map(Project::getId)
+                    .map(p -> p.path("id").asText())
                     .limit(DEMO_LIMIT)
                     .toList();
             if (!sampleProjectIds.isEmpty()) {
@@ -234,17 +234,18 @@ public final class App {
             // A single GET /api/scans/ call with statuses=DEMO_SCAN_STATUSES,
             // limit=DEMO_LIMIT, offset=0 - NOT client.listScans(...), which
             // would instead auto-page until every matching scan in the
-            // tenant had been retrieved.
+            // tenant had been retrieved. Individual scans are the elements
+            // of the response's "scans" array.
             // ----------------------------------------------------------------
             System.out.println();
             System.out.println("=== Scan listing (statuses = " + DEMO_SCAN_STATUSES
                     + ", demo-limited to " + DEMO_LIMIT + ") ===");
-            List<Scan> scans = Objects.requireNonNullElse(
-                    client.getScansPage(DEMO_SCAN_STATUSES, DEMO_LIMIT, 0).getScans(), List.of());
+            List<JsonNode> scans = toList(client.getScansPage(DEMO_SCAN_STATUSES, DEMO_LIMIT, 0).path("scans"));
             System.out.println("Fetched " + scans.size() + " scan(s) (tenant may contain more matching scans).");
-            for (Scan s : scans) {
+            for (JsonNode s : scans) {
                 System.out.printf("  %-36s %-10s %-30s %s%n",
-                        s.getId(), s.getStatus(), s.getProjectName(), s.getCreatedAt());
+                        s.path("id").asText(), s.path("status").asText(),
+                        s.path("projectName").asText(), s.path("createdAt").asText());
             }
 
             // ----------------------------------------------------------------
@@ -256,19 +257,19 @@ public final class App {
             // response contains, per scan, one block of counters per engine
             // (sastCounters, kicsCounters, scaCounters, ...), each broken
             // down by severity/status/state/age/etc. ScanSummaryPrinter
-            // walks and prints every one of those key/counter pairs; see its
-            // javadoc for how that raw structure is captured and traversed.
+            // walks and prints every one of those key/counter pairs directly
+            // from the parsed JSON; see its javadoc for details.
             // ----------------------------------------------------------------
             if (!latestScansByProject.isEmpty()) {
                 System.out.println();
                 System.out.println("=== Scan summaries (demo-limited to " + DEMO_LIMIT + " of the latest scans above) ===");
                 List<String> scanIds = latestScansByProject.values().stream()
-                        .map(Scan::getId)
+                        .map(scan -> scan.path("id").asText())
                         .limit(DEMO_LIMIT)
                         .toList();
 
-                ScanSummaryResponse summaries = client.getScanSummaries(scanIds);
-                for (var summary : summaries.getScansSummaries()) {
+                JsonNode summariesResponse = client.getScanSummaries(scanIds);
+                for (JsonNode summary : summariesResponse.path("scansSummaries")) {
                     System.out.println();
                     ScanSummaryPrinter.print(summary);
                 }
@@ -280,12 +281,13 @@ public final class App {
             // POST /api/data_analytics/analyticsAPI/v1 answers ~13 different
             // KPI queries via one endpoint, selected by the request body's
             // "kpi" field; CxOneClient exposes a typed method per KPI shown
-            // below (AnalyticsQuery.kpi(...) is set automatically by each).
-            // All four samples share the same date range - the last
-            // DEMO_ANALYTICS_LOOKBACK_DAYS days, ending now - built once here
-            // and reused via query() below. Only mostCommonVulnerabilities
-            // (6d) takes a result-count parameter; it is demo-limited to
-            // DEMO_LIMIT the same as every other step.
+            // below (AnalyticsQuery.kpi(...) is set automatically by each),
+            // each returning the raw response JSON. All four samples share
+            // the same date range - the last DEMO_ANALYTICS_LOOKBACK_DAYS
+            // days, ending now - built once here and reused via query()
+            // below. Only mostCommonVulnerabilities (6d) takes a
+            // result-count parameter; it is demo-limited to DEMO_LIMIT the
+            // same as every other step.
             // ----------------------------------------------------------------
             System.out.println();
             System.out.println("=== Analytics KPI samples (last " + DEMO_ANALYTICS_LOOKBACK_DAYS + " days) ===");
@@ -295,44 +297,52 @@ public final class App {
             // 6a. vulnerabilitiesBySeverityTotal: overall vulnerability count
             //     broken down by severity (critical/high/medium/low/information).
             //     This KPI has no result-count limit to demo-cap - it always
-            //     returns one bucket per severity.
+            //     returns one bucket per severity. Response is a JSON object
+            //     with a "distribution" array plus "loc"/"total".
             System.out.println();
             System.out.println("--- vulnerabilitiesBySeverityTotal ---");
-            DistributionResponse bySeverity = client.getVulnerabilitiesBySeverityTotal(
-                    query(startDate, endDate));
+            JsonNode bySeverity = client.getVulnerabilitiesBySeverityTotal(query(startDate, endDate));
             printDistribution(bySeverity);
 
             // 6b. vulnerabilitiesByStateTotal: overall vulnerability count
             //     broken down by result state (toVerify/notExploitable/
             //     proposedNotExploitable/confirmed/urgent), restricted here to
             //     the SAST engine as an example of combining a scanner filter
-            //     with the date range.
+            //     with the date range. Same response shape as 6a.
             System.out.println();
             System.out.println("--- vulnerabilitiesByStateTotal (scanners=sast) ---");
-            DistributionResponse byState = client.getVulnerabilitiesByStateTotal(
+            JsonNode byState = client.getVulnerabilitiesByStateTotal(
                     query(startDate, endDate).scanners(List.of("sast")));
             printDistribution(byState);
 
             // 6c. vulnerabilitiesBySeverityAndStateTotal: same two dimensions
             //     as 6a/6b combined into one call, filtered to only
             //     "critical"/"high" severities as an example of the
-            //     severities filter.
+            //     severities filter. Response is a top-level JSON array.
             System.out.println();
             System.out.println("--- vulnerabilitiesBySeverityAndStateTotal (severities=critical,high) ---");
-            List<SeverityAndStateItem> bySeverityAndState = client.getVulnerabilitiesBySeverityAndStateTotal(
+            JsonNode bySeverityAndState = client.getVulnerabilitiesBySeverityAndStateTotal(
                     query(startDate, endDate).severities(List.of("critical", "high")));
             printSeverityAndState(bySeverityAndState);
 
             // 6d. mostCommonVulnerabilities: the most frequently occurring
             //     vulnerability names, each with its own severity breakdown.
             //     "limit" is required for this KPI - demo-limited to
-            //     DEMO_LIMIT, same as every other step.
+            //     DEMO_LIMIT, same as every other step. Response is a
+            //     top-level JSON array.
             System.out.println();
             System.out.println("--- mostCommonVulnerabilities (demo-limited to " + DEMO_LIMIT + ") ---");
-            List<MostCommonVulnerabilitiesItem> mostCommon = client.getMostCommonVulnerabilities(
+            JsonNode mostCommon = client.getMostCommonVulnerabilities(
                     query(startDate, endDate).limit(DEMO_LIMIT));
             printMostCommonVulnerabilities(mostCommon);
         }
+    }
+
+    /** Collects a (possibly missing/non-array) JsonNode's elements into a plain List, defaulting to empty. */
+    private static List<JsonNode> toList(JsonNode arrayNode) {
+        List<JsonNode> list = new ArrayList<>();
+        arrayNode.forEach(list::add);
+        return list;
     }
 
     /** Builds a fresh {@link AnalyticsQuery} scoped to the given date range; {@code kpi} is set by the caller's typed method. */
@@ -340,38 +350,41 @@ public final class App {
         return AnalyticsQuery.create().startDate(startDate).endDate(endDate);
     }
 
-    /** Prints a {@link DistributionResponse}'s buckets plus its loc/total. */
-    private static void printDistribution(DistributionResponse response) {
-        for (DistributionItem item : response.getDistribution()) {
-            System.out.printf("  %-14s results=%-6d percentage=%s%% density=%s%n",
-                    item.getLabel(), item.getResults(), item.getPercentage(), item.getDensity());
+    /** Prints a severity/state/status distribution response's buckets plus its loc/total. */
+    private static void printDistribution(JsonNode response) {
+        for (JsonNode item : response.path("distribution")) {
+            System.out.printf("  %-14s results=%-6s percentage=%s%% density=%s%n",
+                    item.path("label").asText(), item.path("results").asText(),
+                    item.path("percentage").asText(), item.path("density").asText());
         }
-        System.out.println("  loc=" + response.getLoc() + " total=" + response.getTotal());
+        System.out.println("  loc=" + response.path("loc").asText() + " total=" + response.path("total").asText());
     }
 
     /** Prints each state entry (including the trailing "Totals" row) with its nested severity breakdown. */
-    private static void printSeverityAndState(List<SeverityAndStateItem> items) {
-        for (SeverityAndStateItem item : items) {
-            System.out.printf("  %-26s results=%d%n", item.getLabel(), item.getResults());
-            item.getSeverities().forEach(sev ->
-                    System.out.printf("      %-14s results=%d%n", sev.getLabel(), sev.getResults()));
+    private static void printSeverityAndState(JsonNode items) {
+        for (JsonNode item : items) {
+            System.out.printf("  %-26s results=%s%n", item.path("label").asText(), item.path("results").asText());
+            for (JsonNode sev : item.path("severities")) {
+                System.out.printf("      %-14s results=%s%n", sev.path("label").asText(), sev.path("results").asText());
+            }
         }
     }
 
     /** Prints each vulnerability name with its total and severity breakdown. */
-    private static void printMostCommonVulnerabilities(List<MostCommonVulnerabilitiesItem> items) {
-        for (MostCommonVulnerabilitiesItem item : items) {
-            System.out.printf("  %-40s total=%d%n", item.getVulnerabilityName(), item.getTotal());
-            item.getSeverities().forEach(sev ->
-                    System.out.printf("      %-14s results=%d%n", sev.getLabel(), sev.getResults()));
+    private static void printMostCommonVulnerabilities(JsonNode items) {
+        for (JsonNode item : items) {
+            System.out.printf("  %-40s total=%s%n", item.path("vulnerabilityName").asText(), item.path("total").asText());
+            for (JsonNode sev : item.path("severities")) {
+                System.out.printf("      %-14s results=%s%n", sev.path("label").asText(), sev.path("results").asText());
+            }
         }
     }
 
     /** Prints one line per project-id -> scan entry returned by the last-scan endpoint. */
-    private static void printLatestScans(Map<String, Scan> latestScansByProject) {
+    private static void printLatestScans(Map<String, JsonNode> latestScansByProject) {
         latestScansByProject.forEach((projectId, scan) ->
                 System.out.printf("  %-36s -> %-36s %-10s %s%n",
-                        projectId, scan.getId(), scan.getStatus(), scan.getCreatedAt()));
+                        projectId, scan.path("id").asText(), scan.path("status").asText(), scan.path("createdAt").asText()));
     }
 
     /**
@@ -383,7 +396,7 @@ public final class App {
                                          List<String> projectIds, String scanStatus, String engine) throws Exception {
         System.out.println();
         System.out.println("--- " + description + " ---");
-        Map<String, Scan> result = client.getProjectsLastScanPage(
+        Map<String, JsonNode> result = client.getProjectsLastScanPage(
                 projectIds, scanStatus, /* branch */ null, engine, /* applicationId */ null,
                 DEMO_LIMIT, /* offset */ 0);
         if (result.isEmpty()) {

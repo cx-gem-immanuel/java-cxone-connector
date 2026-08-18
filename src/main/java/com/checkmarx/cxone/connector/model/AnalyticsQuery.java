@@ -1,16 +1,27 @@
 package com.checkmarx.cxone.connector.model;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
 
 /**
- * Request body for {@code POST /api/data_analytics/analyticsAPI/v1} (the
- * "Data Analytics" / KPI query API).
+ * Fluent builder for the request body of
+ * {@code POST /api/data_analytics/analyticsAPI/v1} (the "Data Analytics"
+ * / KPI query API).
+ *
+ * <p>Unlike a typed request POJO, this class is just a thin, fluent
+ * wrapper around a Jackson {@link ObjectNode} - i.e. a generic JSON tree,
+ * built up field by field and serialized as-is via {@link #toJsonNode()}.
+ * There is no fixed Java field per request property, so any field the API
+ * adds later can be set with {@link #set(String, String)} /
+ * {@link #setArray(String, List)} without touching this class.
  *
  * <p>Every field is optional except {@code kpi} (set automatically by the
- * typed {@code CxOneClient.get*(...)} convenience methods) - fields left
- * unset are simply omitted from the request body ({@code @JsonInclude(NON_NULL)}).
+ * typed {@code CxOneClient.get*(...)} convenience methods) - fields never
+ * set are simply absent from the request body.
  *
  * <p>Allowed values, per the OpenAPI spec
  * ({@code n-virginia-metrics-data-analytics-api-ANALYTICS_API.yaml}):
@@ -36,32 +47,15 @@ import java.util.List;
  *           .startDate("2026-07-19T00:00:00")
  *           .endDate("2026-08-18T00:00:00")
  *           .severities(List.of("critical", "high"));
- *   DistributionResponse result = client.getVulnerabilitiesBySeverityTotal(query);
+ *   JsonNode result = client.getVulnerabilitiesBySeverityTotal(query);
  * </pre>
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class AnalyticsQuery {
+public final class AnalyticsQuery {
 
-    private List<String> projects;
-    private List<String> applications;
-    private List<String> environments;
-    private List<String> scanners;
-    private List<String> applicationTags;
-    private List<String> projectTags;
-    private List<String> scanTags;
-    private List<String> states;
-    private List<String> severities;
-    private List<String> branchNames;
-    private String timezone;
-    private List<String> groupIds;
-    private String startDate;
-    private String endDate;
-    private Integer limit;
-    private Integer offset;
-    private List<String> status;
+    private final ObjectNode node = JsonNodeFactory.instance.objectNode();
 
-    /** Set by {@code CxOneClient}'s typed convenience methods; set it yourself only when using a raw/untyped query. */
-    private String kpi;
+    private AnalyticsQuery() {
+    }
 
     public static AnalyticsQuery create() {
         return new AnalyticsQuery();
@@ -69,99 +63,88 @@ public class AnalyticsQuery {
 
     /** Project IDs and/or project names to filter by. */
     public AnalyticsQuery projects(List<String> projects) {
-        this.projects = projects;
-        return this;
+        return setArray("projects", projects);
     }
 
     /** Application IDs and/or application names to filter by. */
     public AnalyticsQuery applications(List<String> applications) {
-        this.applications = applications;
-        return this;
+        return setArray("applications", applications);
     }
 
     /** Environment IDs and/or environment names to filter by. */
     public AnalyticsQuery environments(List<String> environments) {
-        this.environments = environments;
-        return this;
+        return setArray("environments", environments);
     }
 
     /** Scan engines to filter by: sast, iac, sca, dast, containers, secretdetection, repohealth, byor. */
     public AnalyticsQuery scanners(List<String> scanners) {
-        this.scanners = scanners;
-        return this;
+        return setArray("scanners", scanners);
     }
 
     public AnalyticsQuery applicationTags(List<String> applicationTags) {
-        this.applicationTags = applicationTags;
-        return this;
+        return setArray("applicationTags", applicationTags);
     }
 
     public AnalyticsQuery projectTags(List<String> projectTags) {
-        this.projectTags = projectTags;
-        return this;
+        return setArray("projectTags", projectTags);
     }
 
     public AnalyticsQuery scanTags(List<String> scanTags) {
-        this.scanTags = scanTags;
-        return this;
+        return setArray("scanTags", scanTags);
     }
 
     /** Result states to filter by: toVerify, notExploitable, proposedNotExploitable, confirmed, urgent. */
     public AnalyticsQuery states(List<String> states) {
-        this.states = states;
-        return this;
+        return setArray("states", states);
     }
 
     /** Severities to filter by: critical, high, medium, low, information. */
     public AnalyticsQuery severities(List<String> severities) {
-        this.severities = severities;
-        return this;
+        return setArray("severities", severities);
     }
 
     public AnalyticsQuery branchNames(List<String> branchNames) {
-        this.branchNames = branchNames;
-        return this;
+        return setArray("branchNames", branchNames);
     }
 
     /** Timezone identifier (e.g. "GMT") used to interpret startDate/endDate and format returned dates. */
     public AnalyticsQuery timezone(String timezone) {
-        this.timezone = timezone;
-        return this;
+        return set("timezone", timezone);
     }
 
     public AnalyticsQuery groupIds(List<String> groupIds) {
-        this.groupIds = groupIds;
-        return this;
+        return setArray("groupIds", groupIds);
     }
 
     /** Literal {@code yyyy-MM-ddTHH:mm:ss}, no timezone offset - see {@link #timezone(String)}. */
     public AnalyticsQuery startDate(String startDate) {
-        this.startDate = startDate;
-        return this;
+        return set("startDate", startDate);
     }
 
     /** Literal {@code yyyy-MM-ddTHH:mm:ss}, no timezone offset - see {@link #timezone(String)}. */
     public AnalyticsQuery endDate(String endDate) {
-        this.endDate = endDate;
-        return this;
+        return set("endDate", endDate);
     }
 
     /** Required for the mostCommonVulnerabilities (1-100), mostAgingVulnerabilities (1-100), and allVulnerabilities (1-1000) KPIs. */
     public AnalyticsQuery limit(Integer limit) {
-        this.limit = limit;
+        if (limit != null) {
+            node.put("limit", limit);
+        }
         return this;
     }
 
     /** Required for the allVulnerabilities KPI. */
     public AnalyticsQuery offset(Integer offset) {
-        this.offset = offset;
+        if (offset != null) {
+            node.put("offset", offset);
+        }
         return this;
     }
 
     /** Result statuses to filter by: NEW, RECURRENT. */
     public AnalyticsQuery status(List<String> status) {
-        this.status = status;
-        return this;
+        return setArray("status", status);
     }
 
     /**
@@ -171,79 +154,36 @@ public class AnalyticsQuery {
      * no dedicated typed method (see {@code CxOneClient.queryAnalyticsRaw}).
      */
     public AnalyticsQuery kpi(String kpi) {
-        this.kpi = kpi;
+        return set("kpi", kpi);
+    }
+
+    /** Sets an arbitrary string field not covered by a named method above. */
+    public AnalyticsQuery set(String field, String value) {
+        if (value != null) {
+            node.put(field, value);
+        }
         return this;
     }
 
-    public List<String> getProjects() {
-        return projects;
-    }
-
-    public List<String> getApplications() {
-        return applications;
-    }
-
-    public List<String> getEnvironments() {
-        return environments;
-    }
-
-    public List<String> getScanners() {
-        return scanners;
-    }
-
-    public List<String> getApplicationTags() {
-        return applicationTags;
-    }
-
-    public List<String> getProjectTags() {
-        return projectTags;
-    }
-
-    public List<String> getScanTags() {
-        return scanTags;
-    }
-
-    public List<String> getStates() {
-        return states;
-    }
-
-    public List<String> getSeverities() {
-        return severities;
-    }
-
-    public List<String> getBranchNames() {
-        return branchNames;
-    }
-
-    public String getTimezone() {
-        return timezone;
-    }
-
-    public List<String> getGroupIds() {
-        return groupIds;
-    }
-
-    public String getStartDate() {
-        return startDate;
-    }
-
-    public String getEndDate() {
-        return endDate;
-    }
-
-    public Integer getLimit() {
-        return limit;
-    }
-
-    public Integer getOffset() {
-        return offset;
-    }
-
-    public List<String> getStatus() {
-        return status;
+    /** Sets an arbitrary string-array field not covered by a named method above. */
+    public AnalyticsQuery setArray(String field, List<String> values) {
+        if (values != null) {
+            ArrayNode array = node.putArray(field);
+            values.forEach(array::add);
+        }
+        return this;
     }
 
     public String getKpi() {
-        return kpi;
+        return node.path("kpi").asText(null);
+    }
+
+    public boolean hasLimit() {
+        return node.has("limit");
+    }
+
+    /** The raw JSON request body (a generic JSON tree), ready to serialize as-is - no intermediate POJO involved. */
+    public JsonNode toJsonNode() {
+        return node;
     }
 }

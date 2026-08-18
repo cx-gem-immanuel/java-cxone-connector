@@ -1,16 +1,6 @@
 package com.checkmarx.cxone.connector;
 
 import com.checkmarx.cxone.connector.model.AnalyticsQuery;
-import com.checkmarx.cxone.connector.model.DistributionResponse;
-import com.checkmarx.cxone.connector.model.MostCommonVulnerabilitiesItem;
-import com.checkmarx.cxone.connector.model.Project;
-import com.checkmarx.cxone.connector.model.ProjectPage;
-import com.checkmarx.cxone.connector.model.Scan;
-import com.checkmarx.cxone.connector.model.ScanPage;
-import com.checkmarx.cxone.connector.model.ScanSummaryResponse;
-import com.checkmarx.cxone.connector.model.SeverityAndStateItem;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.NameValuePair;
@@ -48,7 +38,21 @@ import java.util.logging.Logger;
  *
  * <p>Handles OAuth2 authentication (exchanging the configured API key for a
  * bearer token) against the IAM host, and exposes read-only helpers for
- * pulling data from Checkmarx One:
+ * pulling data from Checkmarx One.
+ *
+ * <p><b>Responses are returned as generic parsed JSON
+ * ({@link JsonNode}/{@code List<JsonNode>}/{@code Map<String, JsonNode>}),
+ * not typed model classes.</b> Every response shape here is either large,
+ * deeply nested, or both (scan summaries alone have ~20 nested counter
+ * shapes; the Analytics API has ~13 different KPI response shapes) - hand-
+ * modeling a POJO per shape would mean a lot of classes to maintain and
+ * update whenever the API adds a field. Reading the response as a JSON tree
+ * and pulling out the fields you actually need with
+ * {@code node.path("fieldName")} avoids that, at the cost of losing
+ * compile-time checking of field names/types (a typo in a path is only
+ * caught at runtime). See {@link ScanSummaryPrinter} and {@code App} for
+ * examples of walking/extracting from the returned nodes.
+ *
  * <ul>
  *   <li>{@link #getAllProjects()} - all projects (auto-paged)</li>
  *   <li>{@link #listScans(List)} - a generic, chronologically-ordered scan
@@ -76,8 +80,7 @@ public class CxOneClient implements Closeable {
 
     private final CxOneConfig config;
     private final CloseableHttpClient httpClient;
-    private final ObjectMapper objectMapper = new ObjectMapper()
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private volatile String bearerToken;
     private volatile Instant tokenExpiration;
@@ -154,38 +157,42 @@ public class CxOneClient implements Closeable {
     // ------------------------------------------------------------------
 
     /**
-     * Fetch a single page of projects.
+     * Fetch a single page of projects as the raw response JSON, e.g.
+     * {@code {"totalCount": 167, "filteredTotalCount": 167, "projects": [...]}}.
+     * Individual projects are the elements of the {@code "projects"} array,
+     * each shaped like
+     * {@code {"id": "...", "name": "...", "tenantId": "...", "tags": {...}, ...}}.
      *
      * @param limit  max records to return; 0 returns all projects in one call
      * @param offset number of results to skip before returning results (>= 0)
      */
-    public ProjectPage getProjectsPage(int limit, int offset) throws IOException {
+    public JsonNode getProjectsPage(int limit, int offset) throws IOException {
         URI uri = buildUri("/api/projects/", builder -> {
             builder.addParameter("limit", String.valueOf(limit));
             builder.addParameter("offset", String.valueOf(offset));
         });
-        return objectMapper.readValue(executeGet(uri), ProjectPage.class);
+        return objectMapper.readTree(executeGet(uri));
     }
 
-    /** Fetch all projects, paging automatically using the configured default page size. */
-    public List<Project> getAllProjects() throws IOException {
+    /** Fetch all projects (as individual project JSON nodes), paging automatically using the configured default page size. */
+    public List<JsonNode> getAllProjects() throws IOException {
         return getAllProjects(config.getDefaultPageSize());
     }
 
-    /** Fetch all projects, paging automatically using {@code pageSize} per request. */
-    public List<Project> getAllProjects(int pageSize) throws IOException {
-        List<Project> all = new ArrayList<>();
+    /** Fetch all projects (as individual project JSON nodes), paging automatically using {@code pageSize} per request. */
+    public List<JsonNode> getAllProjects(int pageSize) throws IOException {
+        List<JsonNode> all = new ArrayList<>();
         int offset = 0;
         int total = Integer.MAX_VALUE;
 
         while (all.size() < total) {
-            ProjectPage page = getProjectsPage(pageSize, offset);
-            total = page.getFilteredTotalCount();
-            List<Project> projects = page.getProjects();
-            if (projects == null || projects.isEmpty()) {
+            JsonNode page = getProjectsPage(pageSize, offset);
+            total = page.path("filteredTotalCount").asInt(0);
+            JsonNode projects = page.path("projects");
+            if (!projects.isArray() || projects.isEmpty()) {
                 break;
             }
-            all.addAll(projects);
+            projects.forEach(all::add);
             offset += projects.size();
         }
 
@@ -204,8 +211,12 @@ public class CxOneClient implements Closeable {
     // ------------------------------------------------------------------
 
     /**
-     * Fetch a single page of the generic scan listing, optionally filtered
-     * by status.
+     * Fetch a single page of the generic scan listing as the raw response
+     * JSON, e.g.
+     * {@code {"totalCount": 22, "filteredTotalCount": 7, "scans": [...]}}.
+     * Individual scans are the elements of the {@code "scans"} array, each
+     * shaped like
+     * {@code {"id": "...", "status": "...", "projectId": "...", "projectName": "...", ...}}.
      *
      * @param statuses statuses to filter by; case insensitive, OR'd together
      *                 server-side. Allowed values: {@code Queued}, {@code Running},
@@ -214,7 +225,7 @@ public class CxOneClient implements Closeable {
      * @param limit    max records to return
      * @param offset   number of results to skip before returning results
      */
-    public ScanPage getScansPage(List<String> statuses, int limit, int offset) throws IOException {
+    public JsonNode getScansPage(List<String> statuses, int limit, int offset) throws IOException {
         URI uri = buildUri("/api/scans/", builder -> {
             if (statuses != null) {
                 for (String status : statuses) {
@@ -224,13 +235,13 @@ public class CxOneClient implements Closeable {
             builder.addParameter("limit", String.valueOf(limit));
             builder.addParameter("offset", String.valueOf(offset));
         });
-        return objectMapper.readValue(executeGet(uri), ScanPage.class);
+        return objectMapper.readTree(executeGet(uri));
     }
 
     /**
-     * Fetch the generic scan listing across all projects, optionally
-     * filtered by status, paging automatically using the configured default
-     * page size.
+     * Fetch the generic scan listing (as individual scan JSON nodes) across
+     * all projects, optionally filtered by status, paging automatically
+     * using the configured default page size.
      *
      * <p>{@code GET /api/scans/} returns scans ordered most-recent-first,
      * but is not restricted to one scan per project - e.g. pass
@@ -239,24 +250,24 @@ public class CxOneClient implements Closeable {
      * {@link #getLatestScans()} instead if you want exactly one (the most
      * recent) scan per project.
      */
-    public List<Scan> listScans(List<String> statuses) throws IOException {
+    public List<JsonNode> listScans(List<String> statuses) throws IOException {
         return listScans(statuses, config.getDefaultPageSize());
     }
 
     /** Same as {@link #listScans(List)} but with an explicit page size. */
-    public List<Scan> listScans(List<String> statuses, int pageSize) throws IOException {
-        List<Scan> all = new ArrayList<>();
+    public List<JsonNode> listScans(List<String> statuses, int pageSize) throws IOException {
+        List<JsonNode> all = new ArrayList<>();
         int offset = 0;
         int total = Integer.MAX_VALUE;
 
         while (all.size() < total) {
-            ScanPage page = getScansPage(statuses, pageSize, offset);
-            total = page.getFilteredTotalCount();
-            List<Scan> scans = page.getScans();
-            if (scans == null || scans.isEmpty()) {
+            JsonNode page = getScansPage(statuses, pageSize, offset);
+            total = page.path("filteredTotalCount").asInt(0);
+            JsonNode scans = page.path("scans");
+            if (!scans.isArray() || scans.isEmpty()) {
                 break;
             }
-            all.addAll(scans);
+            scans.forEach(all::add);
             offset += scans.size();
         }
 
@@ -288,10 +299,6 @@ public class CxOneClient implements Closeable {
     // getLatestScans(int) for how paging is handled here instead.
     // ------------------------------------------------------------------
 
-    /** Jackson type token for deserializing the project-id -> scan map returned by this endpoint. */
-    private static final TypeReference<Map<String, Scan>> LAST_SCAN_MAP_TYPE = new TypeReference<>() {
-    };
-
     /**
      * Fetch a single page of "latest scan per project" records.
      *
@@ -315,11 +322,11 @@ public class CxOneClient implements Closeable {
      *                      exclusive with {@code projectIds} server-side.
      * @param limit         max number of projects to return (server default is 20)
      * @param offset        number of results to skip before returning results
-     * @return map of project ID -> that project's latest scan matching the filters
+     * @return map of project ID -> that project's latest scan JSON node matching the filters
      */
-    public Map<String, Scan> getProjectsLastScanPage(List<String> projectIds, String scanStatus, String branch,
-                                                      String engine, String applicationId,
-                                                      int limit, int offset) throws IOException {
+    public Map<String, JsonNode> getProjectsLastScanPage(List<String> projectIds, String scanStatus, String branch,
+                                                          String engine, String applicationId,
+                                                          int limit, int offset) throws IOException {
         URI uri = buildUri("/api/projects/last-scan", builder -> {
             if (projectIds != null) {
                 for (String projectId : projectIds) {
@@ -341,7 +348,11 @@ public class CxOneClient implements Closeable {
             builder.addParameter("limit", String.valueOf(limit));
             builder.addParameter("offset", String.valueOf(offset));
         });
-        return objectMapper.readValue(executeGet(uri), LAST_SCAN_MAP_TYPE);
+
+        JsonNode root = objectMapper.readTree(executeGet(uri));
+        Map<String, JsonNode> result = new LinkedHashMap<>();
+        root.fields().forEachRemaining(entry -> result.put(entry.getKey(), entry.getValue()));
+        return result;
     }
 
     /**
@@ -349,20 +360,20 @@ public class CxOneClient implements Closeable {
      * branch, engine, or application filter, paging automatically using the
      * configured default page size.
      */
-    public Map<String, Scan> getLatestScans() throws IOException {
+    public Map<String, JsonNode> getLatestScans() throws IOException {
         return getLatestScans(config.getDefaultPageSize());
     }
 
     /** Same as {@link #getLatestScans()} but with an explicit page size. */
-    public Map<String, Scan> getLatestScans(int pageSize) throws IOException {
-        Map<String, Scan> all = new LinkedHashMap<>();
+    public Map<String, JsonNode> getLatestScans(int pageSize) throws IOException {
+        Map<String, JsonNode> all = new LinkedHashMap<>();
         int offset = 0;
 
         // This endpoint reports no total count, so - unlike getAllProjects()
         // or listScans() - we keep paging until a page comes back smaller
         // than the requested limit (or empty), which signals the last page.
         while (true) {
-            Map<String, Scan> page = getProjectsLastScanPage(null, null, null, null, null, pageSize, offset);
+            Map<String, JsonNode> page = getProjectsLastScanPage(null, null, null, null, null, pageSize, offset);
             if (page.isEmpty()) {
                 break;
             }
@@ -382,9 +393,17 @@ public class CxOneClient implements Closeable {
 
     /**
      * Fetch scan-summary counters (severity/status/state/etc. breakdowns)
-     * for the given scan IDs.
+     * for the given scan IDs, as the raw response JSON:
+     * {@code {"scansSummaries": [...], "totalCount": 0}}. Each element of
+     * {@code "scansSummaries"} is one scan's counters and is best consumed
+     * via {@link ScanSummaryPrinter#print(JsonNode)}, e.g.:
+     * <pre>
+     *   for (JsonNode summary : client.getScanSummaries(scanIds).path("scansSummaries")) {
+     *       ScanSummaryPrinter.print(summary);
+     *   }
+     * </pre>
      */
-    public ScanSummaryResponse getScanSummaries(List<String> scanIds) throws IOException {
+    public JsonNode getScanSummaries(List<String> scanIds) throws IOException {
         if (scanIds == null || scanIds.isEmpty()) {
             throw new IllegalArgumentException("scanIds must not be empty");
         }
@@ -393,7 +412,7 @@ public class CxOneClient implements Closeable {
                 builder.addParameter("scan-ids", scanId);
             }
         });
-        return objectMapper.readValue(executeGet(uri), ScanSummaryResponse.class);
+        return objectMapper.readTree(executeGet(uri));
     }
 
     // ------------------------------------------------------------------
@@ -403,21 +422,22 @@ public class CxOneClient implements Closeable {
     // A single POST endpoint answers ~13 different KPI queries, selected via
     // the "kpi" field of the request body; the response shape depends on
     // which KPI was requested (see the OpenAPI spec:
-    // n-virginia-metrics-data-analytics-api-ANALYTICS_API.yaml). Only a
-    // handful of KPIs have dedicated typed methods below as samples; use
-    // queryAnalyticsRaw(...) for any KPI not covered here (the response
-    // shape for every KPI is documented in the spec's "components.schemas").
+    // n-virginia-metrics-data-analytics-api-ANALYTICS_API.yaml). All KPIs
+    // are returned as raw JsonNode here - the typed methods below just set
+    // "kpi" for you; use queryAnalyticsRaw(...) directly for any KPI not
+    // covered by a named method (the response shape for every KPI is
+    // documented in the spec's "components.schemas").
     // ------------------------------------------------------------------
 
     /**
      * Total vulnerability count broken down by severity (critical/high/
      * medium/low/information), for the projects/date-range/etc. described by
      * {@code query}. Sets {@code query}'s {@code kpi} to
-     * {@code vulnerabilitiesBySeverityTotal}.
+     * {@code vulnerabilitiesBySeverityTotal}. Response shape:
+     * {@code {"distribution": [{"label": ..., "density": ..., "percentage": ..., "results": ...}, ...], "loc": ..., "total": ...}}.
      */
-    public DistributionResponse getVulnerabilitiesBySeverityTotal(AnalyticsQuery query) throws IOException {
-        JsonNode node = queryAnalyticsRaw(query.kpi("vulnerabilitiesBySeverityTotal"));
-        return objectMapper.treeToValue(node, DistributionResponse.class);
+    public JsonNode getVulnerabilitiesBySeverityTotal(AnalyticsQuery query) throws IOException {
+        return queryAnalyticsRaw(query.kpi("vulnerabilitiesBySeverityTotal"));
     }
 
     /**
@@ -425,26 +445,22 @@ public class CxOneClient implements Closeable {
      * notExploitable/proposedNotExploitable/confirmed/urgent), for the
      * projects/date-range/etc. described by {@code query}. Sets
      * {@code query}'s {@code kpi} to {@code vulnerabilitiesByStateTotal}.
+     * Same response shape as {@link #getVulnerabilitiesBySeverityTotal}.
      */
-    public DistributionResponse getVulnerabilitiesByStateTotal(AnalyticsQuery query) throws IOException {
-        JsonNode node = queryAnalyticsRaw(query.kpi("vulnerabilitiesByStateTotal"));
-        return objectMapper.treeToValue(node, DistributionResponse.class);
+    public JsonNode getVulnerabilitiesByStateTotal(AnalyticsQuery query) throws IOException {
+        return queryAnalyticsRaw(query.kpi("vulnerabilitiesByStateTotal"));
     }
 
     /**
      * Total vulnerability count broken down by result status (NEW/
      * RECURRENT), for the projects/date-range/etc. described by
      * {@code query}. Sets {@code query}'s {@code kpi} to
-     * {@code vulnerabilitiesByStatusTotal}.
+     * {@code vulnerabilitiesByStatusTotal}. Same response shape as
+     * {@link #getVulnerabilitiesBySeverityTotal}.
      */
-    public DistributionResponse getVulnerabilitiesByStatusTotal(AnalyticsQuery query) throws IOException {
-        JsonNode node = queryAnalyticsRaw(query.kpi("vulnerabilitiesByStatusTotal"));
-        return objectMapper.treeToValue(node, DistributionResponse.class);
+    public JsonNode getVulnerabilitiesByStatusTotal(AnalyticsQuery query) throws IOException {
+        return queryAnalyticsRaw(query.kpi("vulnerabilitiesByStatusTotal"));
     }
-
-    /** Jackson type token for the vulnerabilitiesBySeverityAndStateTotal KPI's array response. */
-    private static final TypeReference<List<SeverityAndStateItem>> SEVERITY_AND_STATE_LIST_TYPE = new TypeReference<>() {
-    };
 
     /**
      * Vulnerability counts broken down by result state, with a nested
@@ -452,21 +468,23 @@ public class CxOneClient implements Closeable {
      * projects/date-range/etc. described by {@code query}. Sets
      * {@code query}'s {@code kpi} to
      * {@code vulnerabilitiesBySeverityAndStateTotal}.
+     *
+     * <p>Unlike the {@code *Total} KPIs above, the response here is a JSON
+     * <b>array</b> at the top level, not an object - e.g.
+     * {@code [{"label": "To Verify", "results": 676, "severities": [{"label": "Critical", "results": 56}, ...]}, ...]}.
      */
-    public List<SeverityAndStateItem> getVulnerabilitiesBySeverityAndStateTotal(AnalyticsQuery query) throws IOException {
-        JsonNode node = queryAnalyticsRaw(query.kpi("vulnerabilitiesBySeverityAndStateTotal"));
-        return objectMapper.convertValue(node, SEVERITY_AND_STATE_LIST_TYPE);
+    public JsonNode getVulnerabilitiesBySeverityAndStateTotal(AnalyticsQuery query) throws IOException {
+        return queryAnalyticsRaw(query.kpi("vulnerabilitiesBySeverityAndStateTotal"));
     }
-
-    /** Jackson type token for the mostCommonVulnerabilities KPI's array response. */
-    private static final TypeReference<List<MostCommonVulnerabilitiesItem>> MOST_COMMON_VULN_LIST_TYPE = new TypeReference<>() {
-    };
 
     /**
      * The most common vulnerabilities (by name), each with its own severity
      * breakdown, for the projects/date-range/etc. described by
      * {@code query}. Sets {@code query}'s {@code kpi} to
      * {@code mostCommonVulnerabilities}.
+     *
+     * <p>Response is a top-level JSON array, e.g.
+     * {@code [{"vulnerabilityName": "SQL Injection", "total": 12, "severities": [{"label": "Critical", "results": 4}, ...]}, ...]}.
      *
      * <p>Requires {@code query.limit(...)} to be set (1-100); this KPI is
      * paged via {@code limit}/{@code offset} like the other list endpoints
@@ -475,12 +493,11 @@ public class CxOneClient implements Closeable {
      * {@code offset} by their chosen limit until a page comes back smaller
      * than that limit.
      */
-    public List<MostCommonVulnerabilitiesItem> getMostCommonVulnerabilities(AnalyticsQuery query) throws IOException {
-        if (query.getLimit() == null) {
+    public JsonNode getMostCommonVulnerabilities(AnalyticsQuery query) throws IOException {
+        if (!query.hasLimit()) {
             throw new IllegalArgumentException("query.limit(...) is required for the mostCommonVulnerabilities KPI");
         }
-        JsonNode node = queryAnalyticsRaw(query.kpi("mostCommonVulnerabilities"));
-        return objectMapper.convertValue(node, MOST_COMMON_VULN_LIST_TYPE);
+        return queryAnalyticsRaw(query.kpi("mostCommonVulnerabilities"));
     }
 
     /**
@@ -499,7 +516,7 @@ public class CxOneClient implements Closeable {
         }
         URI uri = buildUri("/api/data_analytics/analyticsAPI/v1", builder -> {
         });
-        String requestBody = objectMapper.writeValueAsString(query);
+        String requestBody = objectMapper.writeValueAsString(query.toJsonNode());
         return objectMapper.readTree(executePost(uri, requestBody));
     }
 
