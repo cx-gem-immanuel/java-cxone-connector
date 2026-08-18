@@ -25,6 +25,13 @@ everything" convenience methods (`getAllProjects()`, `getLatestScans()`,
 it as a library" below) if you want the demo - or your own code built on
 `CxOneClient` - to pull full result sets._
 
+## CxOne REST API Documentation
+
+Documentation for the CxOne REST API - endpoints, parameters, sample responses etc are available at:
+
+https://checkmarx.stoplight.io/docs/checkmarx-one-api-reference-guide/72b66de24898e-introduction
+
+
 ## Demonstration functionality
 
 `CxOneClient` authenticates to Checkmarx One using the configured API key
