@@ -4,18 +4,18 @@ Sample Java connector for the Checkmarx One (CxOne) REST API, built with
 [Apache HttpClient](https://hc.apache.org/httpcomponents-client-4.5.x/) and
 configured via a Java `.properties` file.
 
-## ⚠️ Demo scope: `App.java` caps every pull at 10
+_**Note**: Demo scope: `App.java` limits the data it pulls from CxOne_
 
-**`App.java` (the runnable demo) intentionally limits every single data pull
+_**`App.java` (the runnable demo) intentionally limits every single data pull
 to 10 items** - 10 projects, 10 scans, 10 latest-scan-per-project results,
 10 scan IDs summarized, 10 results for the `mostCommonVulnerabilities`
 analytics KPI, etc. (see the `DEMO_LIMIT` constant in `App.java`). This is
 purely a demo safety limit, **not** an API or library constraint: the goal
 of the demo is to prove each call works end to end against a real tenant
 without accidentally downloading that tenant's entire project/scan/
-vulnerability history.
+vulnerability history._
 
-`CxOneClient` (the actual connector class/library) is **not** limited -
+_`CxOneClient` (the actual connector class/library) is **not** limited -
 it exposes both the capped, single-page calls the demo uses
 (`getProjectsPage(limit, offset)`, `getScansPage(statuses, limit, offset)`,
 `getProjectsLastScanPage(...)`) and the un-capped, auto-paging "fetch
@@ -23,9 +23,9 @@ everything" convenience methods (`getAllProjects()`, `getLatestScans()`,
 `listScans(statuses)`) for real, non-demo use. Raise or remove
 `App.DEMO_LIMIT` (and swap in the un-capped methods, as shown under "Using
 it as a library" below) if you want the demo - or your own code built on
-`CxOneClient` - to pull full result sets.
+`CxOneClient` - to pull full result sets._
 
-## What it does
+## Demonstration functionality
 
 `CxOneClient` authenticates to Checkmarx One using the configured API key
 and exposes read-only pulls for:
@@ -51,8 +51,7 @@ and exposes read-only pulls for:
   of per-engine counters (severity/status/state/age/query/... breakdowns);
   `ScanSummaryPrinter.print(summary)` walks and prints every label/counter
   pair it contains, without needing a dedicated model class per nested shape.
-- **Analytics KPIs** - `POST /api/data_analytics/analyticsAPI/v1` (the [Data
-  Analytics API](https://ast.checkmarx.net/spec/v1/n-virginia-metrics-data-analytics-api-ANALYTICS_API.yaml)),
+- **Analytics KPIs** - `POST /api/data_analytics/analyticsAPI/v1`,
   a single endpoint answering ~13 different KPI queries selected by the
   request body's `kpi` field. Four are exposed as typed methods -
   `getVulnerabilitiesBySeverityTotal`, `getVulnerabilitiesByStateTotal`,
@@ -69,8 +68,8 @@ As covered above, `getAllProjects()`, `getLatestScans()`, and
 (non-demo) callers who actually want "every project"/"every scan" should
 use those instead of the single-page methods the demo uses.
 
-The bearer token is cached and refreshed automatically (5 minutes before
-expiry).
+_Also, note that the bearer token is cached and refreshed automatically (5 minutes before
+expiry)._
 
 ## Project layout
 
