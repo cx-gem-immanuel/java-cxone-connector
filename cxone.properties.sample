@@ -1,0 +1,28 @@
+# ------------------------------------------------------------------
+# Checkmarx One (CxOne) connection properties.
+#
+# Copy this file to "cxone.properties" (or any path you like) and fill
+# in the values for your tenant. Do NOT commit the filled-in file -
+# cxone.api.key is a secret.
+# ------------------------------------------------------------------
+
+# Keycloak / IAM host used to obtain access tokens, e.g.:
+#   https://iam.checkmarx.net
+cxone.iam.host=https://iam.checkmarx.net
+
+# AST (Checkmarx One) API host used for projects/scans/etc., e.g.:
+#   https://ast.checkmarx.net
+cxone.ast.host=https://ast.checkmarx.net
+
+# Tenant (realm) name.
+cxone.tenant=your-tenant-name
+
+# API key generated from the CxOne "Generate API Key" page (Access Management).
+cxone.api.key=your-api-key-here
+
+# Verify TLS certificates when calling the IAM/AST hosts. Set to false only
+# for troubleshooting against environments with self-signed certificates.
+cxone.verify.ssl=true
+
+# Default page size used when paging through /api/projects and /api/scans.
+cxone.page.size=100
